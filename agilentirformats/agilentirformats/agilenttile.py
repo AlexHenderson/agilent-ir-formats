@@ -1,6 +1,6 @@
 """
     Agilent File Format Handling for Infrared Spectroscopy
-    Copyright (C) 2018-2020  Alex Henderson <alex.henderson@manchester.ac.uk>
+    Copyright (C) 2018-2023  Alex Henderson <alex.henderson@manchester.ac.uk>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU Lesser General Public License as published by
@@ -17,7 +17,7 @@
 """
 
 import math
-import os  # from pathlib import Path  # might want to look into this at some point
+from pathlib import Path
 import struct
 
 import numpy as np
@@ -41,9 +41,8 @@ class AgilentTile:
         # Check filename is provided.
         if filename is not None:
             # Check file extension.
-            fname = os.path.basename(filename)
-            (fstub, fext) = os.path.splitext(fname)
-            if fext.lower() not in (".seq"):
+            filename = Path(filename)
+            if filename.suffix.lower() != ".seq":
                 return False
 
             # Additional tests here
@@ -64,22 +63,17 @@ class AgilentTile:
         # skip the (unknown) header
         tile = tile[255:]
         tile = np.reshape(tile, (self.numberofpoints, self.fpasize, self.fpasize))
-        # tile = xr.DataArray(tile)
         return tile
 
     def _getwavenumbersanddate(self):
-        bspfilename = os.path.join(self.fpath, (self.fstub + ".bsp"))
-        # print(dmtfilename)
+        bspfilename = self._filename.with_suffix(".bsp")
         with open(bspfilename, "rb") as binary_file:
-            binary_file.seek(2228, os.SEEK_SET)
+            binary_file.seek(2228, 0)
             self.startwavenumber = self._readwinint32(binary_file)
-            # print(self.startwavenumber)
-            binary_file.seek(2236, os.SEEK_SET)
+            binary_file.seek(2236, 0)
             self.numberofpoints = self._readwinint32(binary_file)
-            # print(self.numberofpoints)
-            binary_file.seek(2216, os.SEEK_SET)
+            binary_file.seek(2216, 0)
             self.wavenumberstep = self._readwindouble(binary_file)
-            # print(self.wavenumberstep)
 
             stopwavenumber = self.startwavenumber + (self.wavenumberstep * self.numberofpoints)
 
@@ -95,8 +89,8 @@ class AgilentTile:
             # matches2 = re.match(b'(T)', contents)
 
     def _getfpasize(self):
-        tilefilename = os.path.join(self.fpath, (self.fstub + ".dat"))
-        tilesize = os.path.getsize(tilefilename)
+        tilefilename = self._filename.with_suffix(".dat")
+        tilesize = tilefilename.stat().st_size
         data = tilesize - (255 * 4)  # remove header
         data = data / self.numberofpoints
         data = data / 4  # sizeof float
@@ -105,14 +99,7 @@ class AgilentTile:
     def read(self, filename=None):
         """ToDo: If filename is None, open a dialog box"""
         if AgilentTile.isreadable(filename):
-            self.fpath = os.path.dirname(filename)
-            self.fname = os.path.basename(filename)
-            (self.fstub, self.fext) = os.path.splitext(self.fname)
-
-            # print(self.fname)
-            # print(self.fpath)
-            # print(self.fstub)
-            # print(self.fext)
+            self._filename = Path(filename)
 
             # Read the .dmt file to get the wavenumbers and date of acquisition
             # Generate the .dmt filename
@@ -135,10 +122,8 @@ class AgilentTile:
                 for x in (range(self.xtiles)):
                     xstop = xstart + self.fpasize
 
-                    tilefilename = os.path.join(self.fpath, (self.fstub + ".dat".format(x, y)))
+                    tilefilename = self._filename.with_suffix(".dat")
                     tile = self._readtile(tilefilename)
-                    # tile = da.from_delayed(tile, (self.numberofpoints, self.fpasize, self.fpasize), self.datatype)
-                    # tile = xr.DataArray(tile)
 
                     alldata[:, ystart:ystop, xstart:xstop] = tile
 

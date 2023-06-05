@@ -1,6 +1,6 @@
 """
     Agilent File Format Handling for Infrared Spectroscopy
-    Copyright (C) 2018-2020  Alex Henderson <alex.henderson@manchester.ac.uk>
+    Copyright (C) 2018-2023  Alex Henderson <alex.henderson@manchester.ac.uk>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU Lesser General Public License as published by
@@ -17,7 +17,7 @@
 """
 
 import math
-import os  # from pathlib import Path  # might want to look into this at some point
+from pathlib import Path
 import struct
 
 import numpy as np
@@ -26,24 +26,23 @@ import numpy as np
 class AgilentMosaic:
 
     def __init__(self):
-        super().__init__()
         self.data = None
         self.datatype = np.dtype('<f')  # little-endian single-precision float
+        self._filename = None
 
     def filetype(self):
         return "Agilent FTIR Mosaic Files"
 
     def filefilter(self):
-        return "*.dmd; *.drd; *.dms; *.dmt"
+        return "*.dmt"
 
     @staticmethod
     def isreadable(filename=None):
         # Check filename is provided.
         if filename is not None:
             # Check file extension.
-            fname = os.path.basename(filename)
-            (fstub, fext) = os.path.splitext(fname)
-            if fext.lower() not in (".dmd", ".drd", ".dms", ".dmt"):
+            filename = Path(filename)
+            if filename.suffix.lower() != ".dmt":
                 return False
 
             # Additional tests here
@@ -64,22 +63,17 @@ class AgilentMosaic:
         # skip the (unknown) header
         tile = tile[255:]
         tile = np.reshape(tile, (self.numberofpoints, self.fpasize, self.fpasize))
-        # tile = xr.DataArray(tile)
         return tile
 
     def _getwavenumbersanddate(self):
-        dmtfilename = os.path.join(self.fpath, (self.fstub + ".dmt"))
-        # print(dmtfilename)
+        dmtfilename = self._filename.with_suffix(".dmt")
         with open(dmtfilename, "rb") as binary_file:
-            binary_file.seek(2228, os.SEEK_SET)
+            binary_file.seek(2228, 0)
             self.startwavenumber = self._readwinint32(binary_file)
-            # print(self.startwavenumber)
-            binary_file.seek(2236, os.SEEK_SET)
+            binary_file.seek(2236, 0)
             self.numberofpoints = self._readwinint32(binary_file)
-            # print(self.numberofpoints)
-            binary_file.seek(2216, os.SEEK_SET)
+            binary_file.seek(2216, 0)
             self.wavenumberstep = self._readwindouble(binary_file)
-            # print(self.wavenumberstep)
 
             stopwavenumber = self.startwavenumber + (self.wavenumberstep * self.numberofpoints)
 
@@ -95,8 +89,8 @@ class AgilentMosaic:
             # matches2 = re.match(b'(T)', contents)
 
     def _getfpasize(self):
-        tilefilename = os.path.join(self.fpath, (self.fstub + "_0000_0000.dmd"))
-        tilesize = os.path.getsize(tilefilename)
+        tilefilename = self._filename.parent / (self._filename.stem + "_0000_0000.dmd")
+        tilesize = tilefilename.stat().st_size
         data = tilesize - (255 * 4)  # remove header
         data = data / self.numberofpoints
         data = data / 4  # sizeof float
@@ -106,8 +100,8 @@ class AgilentMosaic:
         finished = False
         counter = 0
         while not finished:
-            tilefilename = os.path.join(self.fpath, (self.fstub + "_{:04d}_0000.dmd".format(counter)))
-            if not os.path.exists(tilefilename):
+            tilefilename = self._filename.parent / f"{self._filename.stem}_{counter:04d}_0000.dmd"
+            if not tilefilename.is_file():
                 return counter
             else:
                 counter += 1
@@ -117,8 +111,8 @@ class AgilentMosaic:
         finished = False
         counter = 0
         while not finished:
-            tilefilename = os.path.join(self.fpath, (self.fstub + "_0000_{:04d}.dmd".format(counter)))
-            if not os.path.exists(tilefilename):
+            tilefilename = self._filename.parent / f"{self._filename.stem}_0000_{counter:04d}.dmd"
+            if not tilefilename.is_file():
                 return counter
             else:
                 counter += 1
@@ -127,14 +121,7 @@ class AgilentMosaic:
     def read(self, filename=None):
         """ToDo: If filename is None, open a dialog box"""
         if AgilentMosaic.isreadable(filename):
-            self.fpath = os.path.dirname(filename)
-            self.fname = os.path.basename(filename)
-            (self.fstub, self.fext) = os.path.splitext(self.fname)
-
-            # print(self.fname)
-            # print(self.fpath)
-            # print(self.fstub)
-            # print(self.fext)
+            self._filename = Path(filename)
 
             # Read the .dmt file to get the wavenumbers and date of acquisition
             # Generate the .dmt filename
@@ -157,11 +144,8 @@ class AgilentMosaic:
                 for x in (range(self.xtiles)):
                     xstop = xstart + self.fpasize
 
-                    tilefilename = os.path.join(self.fpath, (self.fstub + "_{:04d}_{:04d}.dmd".format(x, y)))
+                    tilefilename = self._filename.parent / f"{self._filename.stem}_{x:04d}_{y:04d}.dmd"
                     tile = self._readtile(tilefilename)
-                    # tile = da.from_delayed(tile, (self.numberofpoints, self.fpasize, self.fpasize), self.datatype)
-                    # tile = xr.DataArray(tile)
-
                     alldata[:, ystart:ystop, xstart:xstop] = tile
 
                     xstart = xstop
