@@ -9,6 +9,8 @@
 
 """
 
+__version__ = "0.2.0"
+
 from datetime import datetime
 from enum import Enum
 import math
@@ -17,20 +19,52 @@ import re
 import struct
 from typing import Optional
 
+import h5py
 import numpy as np
 
 
 class AgilentIRFile:
+    """Class to open, read and export the contents of an Agilent Fourier Transform Infrared (FTIR) microscopy file.
+
+    FTIR instruments from Agilent Technologies Inc., that use a focal plane array detector, can store hyperspectral
+    images in single 'tile' or multi-tile 'mosaic' file formats. This class can read both single and multi-tile images.
+    Files with a filename extension of *.seq or *.dmt are compatible.
+
+    The class has properties and methods allowing the user to explore the numeric values in the file. In addition, some
+    metadata values are also accessible.
+
+    Properties:
+        wavenumbers     x-axis values of the spectral dimension.
+        data            spectral intensities of the hyperspectral data as a 3D object (height, width, datapoints).
+        total_spectrum  sum of intensity in all pixels, as a function of wavenumber.
+        total_image     sum of intensity in all pixels as a function of position (height, width).
+        metadata        simple metadata relating to these data.
+        hdf5_metadata   metadata arranged into a hierarchy for use in HDF5 export of these data.
+
+    Methods:
+        read()          open and parse a file.
+        export_hdf5()   create a representation on disc of the file in the HDF5 file format.
+
+    Static methods:
+        filetype()      string identifying the type of files this class reads.
+        filefilter()    string identifying the Windows file extensions for files this class can read.
+        isreadable()    whether this class is capable of reading a given file.
+        version()       the version number of this code.
+
+    """
 
     class TileOrMosaic(Enum):
-        """Embedded Enumeration class to hold flags for the types of data the outer class can cope with.
+        """Nested Enumeration class to hold flags for the types of data the outer class can cope with.
+
         """
-        TILE = 1    # : Single tile images from a focal plane array experiment.
+
+        TILE = 1  # : Single tile images from a focal plane array experiment.
         MOSAIC = 2  # : Multiple single tile images arranged into a mosaic.
 
     @staticmethod
     def filetype() -> str:
-        """Returns a string identifying the type of files this class reads.
+        """Return a string identifying the type of files this class reads.
+
         The text is suitable for a Windows OpenFile dialog box.
 
         :return: String describing the file types this class can read.
@@ -40,7 +74,8 @@ class AgilentIRFile:
 
     @staticmethod
     def filefilter() -> str:
-        """Returns a string identifying the Windows file extensions for files this class can read.
+        """Return a string identifying the Windows file extensions for files this class can read.
+
         The text is suitable for a Windows OpenFile dialog box.
 
         :return: String containing the Windows file extensions for files this class can read.
@@ -50,7 +85,7 @@ class AgilentIRFile:
 
     @staticmethod
     def isreadable(filename: str | Path = None) -> bool:
-        """Determines whether this class is capable of reading a given file.
+        """Determine whether this class is capable of reading a given file.
 
         :param filename: A filename to check.
         :type filename: str or :class:`pathlib.Path`, optional
@@ -67,11 +102,25 @@ class AgilentIRFile:
         # Passed all available tests so suggest we can read this file
         return True
 
+    @staticmethod
+    def version() -> str:
+        """Return the version number of this code.
+
+        See https://semver.org/ for more information.
+
+        :return: Version number of this code.
+        :rtype: str
+        """
+        return __version__
+
     def __init__(self, filename: str | Path = None):
-        """Constructor method
+        """Constructor method.
+
+        A filename is required either here, or as a parameter to the `read` method.
 
         :param filename: The location of a file to read.
         :type filename: str or :class:`pathlib.Path`, optional
+        :raises RuntimeError: Raised if the file is of a format that cannot be read.
         """
         self._datatype = np.dtype('<f')  # little-endian single-precision float
         self._tile_or_mosaic: Optional[AgilentIRFile.TileOrMosaic] = None
@@ -86,6 +135,8 @@ class AgilentIRFile:
         self._num_xpixels: Optional[int] = None
         self._num_ypixels: Optional[int] = None
         self._data: Optional[np.ndarray] = None
+        self._totalimage: Optional[np.ndarray] = None
+        self._totalspectrum: Optional[np.ndarray] = None
         self._acquisition_datetime: Optional[datetime] = None
         self._file_has_been_read: bool = False
 
@@ -99,10 +150,26 @@ class AgilentIRFile:
                 case _:
                     raise RuntimeError("Cannot read this file type.")
 
-    def _num_tiles(self) -> None:
-        """Determines how many focal plane array tiles are in the x and y directions of the image.
-        For single tile images, both x and y will be 1.
+    def __repr__(self) -> str:
+        """Generate a string representation of this object.
 
+        :return: String representation of this object.
+        :rtype: str
+        """
+        return f"Agilent FTIR image. Filename: {self._filename}."
+
+    def __str__(self) -> str:
+        """Generate a string representation of this object.
+
+        :return: String representation of this object.
+        :rtype: str
+        """
+        return f"Agilent FTIR image. Filename: {self._filename}."
+
+    def _num_tiles(self) -> None:
+        """Determine how many focal plane array tiles are in the x and y directions of the image.
+
+        For single tile images, both x and y will be 1.
         """
         match self._tile_or_mosaic:
             case AgilentIRFile.TileOrMosaic.TILE:
@@ -132,8 +199,9 @@ class AgilentIRFile:
                 raise RuntimeError("Cannot read this file type.")
 
     def _get_fpa_size(self) -> None:
-        """Determines the number of pixels across the focal plane array detector. These detectors are square.
+        """Determine the number of pixels across the focal plane array detector.
 
+        These detectors are square, so this value is both the height and width of the focal plane array detector.
         """
         match self._tile_or_mosaic:
             case AgilentIRFile.TileOrMosaic.MOSAIC:
@@ -150,7 +218,7 @@ class AgilentIRFile:
         self._fpa_size = int(math.sqrt(data))  # fpa size likely to be 64 or 128 pixels square
 
     def _read_win_int32(self, binary_file) -> int:
-        """Reads 4 bytes from the file, treats then as a 32-bit little-endian integer, and returns that integer.
+        """Read 4 bytes from the file, treat them as a 32-bit little-endian integer, and return that integer.
 
         :param binary_file: An open binary file stream.
         :return: An integer.
@@ -159,7 +227,7 @@ class AgilentIRFile:
         return int.from_bytes(binary_file.read(4), byteorder='little')
 
     def _read_win_double(self, binary_file) -> float:
-        """Reads 8 bytes from the file and converts these to a double precision float.
+        """Read 8 bytes from the file, convert these to a double precision float and return the value.
 
         :param binary_file: An open binary file stream.
         :return: A double precision float.
@@ -168,7 +236,7 @@ class AgilentIRFile:
         return struct.unpack('<d', binary_file.read(8))[0]
 
     def _get_wavenumbers(self) -> None:
-        """Extracts a vector of wavenumber values from the file.
+        """Extract a vector of wavenumber values from the file.
 
         """
         match self._tile_or_mosaic:
@@ -197,7 +265,7 @@ class AgilentIRFile:
             self._last_wavenumber = self._wavenumbers[-1]
 
     def _get_acquisition_date(self) -> None:
-        """Extracts the date and time of spectral acquisition from the file.
+        """Extract the date and time of spectral acquisition from the file.
 
         """
         match self._tile_or_mosaic:
@@ -208,7 +276,7 @@ class AgilentIRFile:
             case _:
                 raise RuntimeError("Cannot read this file type.")
 
-        # read in the whole file (it's small) and regex it for the acquisition date/time
+        # Read in the whole file (it's small) and regex it for the acquisition date/time.
         file_contents = filename.read_bytes()
         regex = re.compile(b"Time Stamp.{44}\w+, (\w+) (\d\d), (\d\d\d\d) (\d\d):(\d\d):(\d\d)")
         matches = re.search(regex, file_contents)
@@ -253,8 +321,9 @@ class AgilentIRFile:
             self._acquisition_datetime = dateobj
 
     def _read_tile(self, filename: Path) -> np.ndarray:
-        """Extracts the spectral intensity values from a given tile, defined by the tile's filename.
-        Note that the returned :class:`numpy.ndarray` is memory mapped, rather than being read into RAM.
+        """Extract the spectral intensity values from a given tile, defined by the tile's filename.
+
+        Note the returned :class:`numpy.ndarray` is memory mapped, rather than being read into memory.
 
         :param filename: The filename of a spectral tile file.
         :type filename: :class:`pathlib.Path`
@@ -268,7 +337,8 @@ class AgilentIRFile:
         return tile
 
     def read(self, filename: str | Path = None) -> None:
-        """Opens the file at location `filename`.
+        """Open the file at location `filename`.
+
         If a filename was not provided when the object was created, it must be provided here.
         The same object can be reused by providing a new filename. In this case the object is reinitialised with this
         new file.
@@ -320,13 +390,227 @@ class AgilentIRFile:
                 raise RuntimeError("Cannot read this file type.")
 
         self._data = np.fliplr(self._data)
+        # Convert data to row-major orientation. Slowest changing dimension first, fastest changing dim last.
+        # Data is in this orientation: (y, x, channels)
+        self._data = np.transpose(self._data, (1, 2, 0))
+
+        # Calculate some summaries for ease of access
+        if (self._tile_or_mosaic == AgilentIRFile.TileOrMosaic.MOSAIC) or \
+           (self._tile_or_mosaic == AgilentIRFile.TileOrMosaic.TILE):
+            self._totalimage = np.sum(self._data, axis=2)
+
+        if (self._tile_or_mosaic == AgilentIRFile.TileOrMosaic.MOSAIC) or \
+           (self._tile_or_mosaic == AgilentIRFile.TileOrMosaic.TILE):
+            self._totalspectrum = np.sum(np.sum(self._data, axis=0), axis=0)
+        else:
+            self._totalspectrum = self._data
+
         self._file_has_been_read = True
+
+    def _generate_hdf5_metadata(self) -> dict[str, any]:
+        """Return a `dict` containing metadata parameters that can be used for the HDF5 file format.
+
+        These metadata terms are designed to suitable for multiple analytical techniques.
+        The keys of the dict are:
+            '/metadata/generator/name': name of this class.
+            '/metadata/generator/url': online location of this class.
+            '/metadata/generator/version': version number of this code. See https://semver.org/ for more information.
+
+            '/metadata/source/filename': name of the source file.
+
+            '/metadata/data/datapoints': number of spectral data points.
+            '/metadata/data/height': height of the image in pixels.
+            '/metadata/data/width': width of the image in pixels.
+            '/metadata/data/image_origin': location of the image origin. For example, 'upper left'.
+            '/metadata/data/shape': shape of the data object.
+            '/metadata/data/shape_interpretation': interpretation of the axes of the data object.
+
+            '/metadata/plotting/xlabelname': physical quantity of the spectral x-axis dimension.
+            '/metadata/plotting/xlabelunit': unit of the spectral x-axis dimension.
+            '/metadata/plotting/xlabel': label suitable for the x-axis of a spectral plot.
+            '/metadata/plotting/ylabelname': physical quantity of the spectral y-axis dimension.
+            '/metadata/plotting/ylabelunit': unit of the spectral y-axis dimension.
+            '/metadata/plotting/ylabel': = label suitable for the y-axis of a spectral plot.
+            '/metadata/plotting/plot_high2low': whether it is appropriate to plot the x-axis from high to low.
+
+            '/metadata/experiment/first_xvalue': lowest wavenumber.
+            '/metadata/experiment/last_xvalue': = highest wavenumber.
+
+            '/metadata/semantics/technique/accuracy_of_term': how accurate are the semantics of this section.
+            '/metadata/semantics/technique/term': ontological name of this analysis technique.
+            '/metadata/semantics/technique/description': ontological description of this analysis technique.
+            '/metadata/semantics/technique/uri': ontological uri of this analysis technique.
+
+        :return: Metadata parameters suitable for HDF5.
+        :rtype: dict
+        """
+        if not self._file_has_been_read:
+            self.read(self._filename)
+
+        # /metadata/generator
+        h5metadata = dict()
+        h5metadata['/metadata/generator/name'] = 'agilent-ir-formats'
+        h5metadata['/metadata/generator/url'] = 'https://github.com/AlexHenderson/agilent-ir-formats'
+        h5metadata['/metadata/generator/version'] = __version__
+
+        # /metadata/source
+        h5metadata['/metadata/source/filename'] = str(self._filename.name)
+
+        # /metadata/data
+        h5metadata['/metadata/data/datapoints'] = self._num_datapoints
+        if (self._tile_or_mosaic == AgilentIRFile.TileOrMosaic.MOSAIC) or \
+           (self._tile_or_mosaic == AgilentIRFile.TileOrMosaic.TILE):
+            h5metadata['/metadata/data/height'] = self._num_ypixels
+            h5metadata['/metadata/data/width'] = self._num_xpixels
+            h5metadata['/metadata/data/image_origin'] = 'upper left'
+            h5metadata['/metadata/data/shape'] = self._data.shape
+            h5metadata['/metadata/data/shape_interpretation'] = ["height", "width", "datapoints"]
+
+        # /metadata/plotting
+        h5metadata['/metadata/plotting/xlabelname'] = "wavenumber"
+        h5metadata['/metadata/plotting/xlabelunit'] = "cm^-1"
+        h5metadata['/metadata/plotting/xlabel'] = \
+            f"{h5metadata['/metadata/plotting/xlabelname']} ({h5metadata['/metadata/plotting/xlabelunit']})"
+        h5metadata['/metadata/plotting/ylabelname'] = "absorbance"
+        h5metadata['/metadata/plotting/ylabelunit'] = ""
+        h5metadata['/metadata/plotting/ylabel'] = h5metadata['/metadata/plotting/ylabelname']
+        h5metadata['/metadata/plotting/plot_high2low'] = True
+
+        # /metadata/experiment
+        h5metadata['/metadata/experiment/first_xvalue'] = self._first_wavenumber,
+        h5metadata['/metadata/experiment/last_xvalue'] = self._last_wavenumber,
+
+        # /metadata/semantics
+        h5metadata['/metadata/semantics/technique/accuracy_of_term'] = 'http://www.w3.org/2004/02/skos/core#exactMatch'
+        h5metadata['/metadata/semantics/technique/term'] = 'Fourier transform infrared microscopy'
+        h5metadata['/metadata/semantics/technique/description'] = \
+            'The collection of spatially resolved infrared spectra of a sample during optical microscopy. ' \
+            'The infrared spectra are obtained by single pulse of infrared radiation, ' \
+            'and are subject to a Fourier transform.'
+        h5metadata['/metadata/semantics/technique/uri'] = 'http://purl.obolibrary.org/obo/CHMO_0000051'
+
+        return h5metadata
+
+    def export_hdf5(self, filename: str | Path = None):
+        """Write a version of the file to disc in HDF5 format.
+
+        If `filename` is `None`, the source file's name is used, swapping the .dmt extension with .h5.
+
+        The data is both chunked and compressed. The total intensity spectrum and total intensity image
+        (where appropriate) are also exported. A range of associated metadata is also included.
+
+        A free viewer for HDF5 files is available at https://www.hdfgroup.org/downloads/hdfview/.
+
+        :param filename: The name of the target HDF5 file.
+        :type filename: str or :class:`pathlib.Path`, optional
+        """
+        if not self._file_has_been_read:
+            self.read(self._filename)
+
+        if filename is None:
+            filename = self._filename.with_suffix(".h5")
+
+        # Default parameters for HDF5 export
+        h5parameters = dict()
+        h5parameters['extn'] = '.h5'
+        h5parameters['chunkwidth'] = 64
+        h5parameters['chunkheight'] = 64
+        h5parameters['chunkxaxis'] = 100
+        h5parameters['deflate'] = 4
+        h5parameters['shuffle'] = True
+
+        chunkwidth = min(h5parameters['chunkwidth'], self._num_xpixels)
+        chunkheight = min(h5parameters['chunkheight'], self._num_ypixels)
+        chunkxaxis = min(h5parameters['chunkxaxis'], self._num_datapoints)
+
+        with h5py.File(filename, "w") as h5file:
+            # Write the intensity values
+            ds = h5file.create_dataset("/data/intensities", self._data.shape, self._data.dtype,
+                                       chunks=(chunkheight, chunkwidth, chunkxaxis),
+                                       compression="gzip", compression_opts=h5parameters['deflate'],
+                                       shuffle=h5parameters['shuffle'])
+            ds[:] = self._data
+
+            # Write the wavenumber values
+            ds = h5file.create_dataset("/data/xvalues", self._wavenumbers.shape, self._wavenumbers.dtype,
+                                       chunks=(chunkxaxis,),
+                                       compression="gzip", compression_opts=h5parameters['deflate'],
+                                       shuffle=h5parameters['shuffle'])
+            ds[:] = self._wavenumbers
+
+            # Write the total signal spectrum intensity values
+            ds = h5file.create_dataset("/data/totalspectrum", self._totalspectrum.shape, self._totalspectrum.dtype,
+                                       chunks=(chunkxaxis,),
+                                       compression="gzip", compression_opts=h5parameters['deflate'],
+                                       shuffle=h5parameters['shuffle'])
+            ds[:] = self._totalspectrum
+
+            if self._totalimage is not None:
+                # Write the total image intensity values
+                # No point chunking, but required for compression
+                ds = h5file.create_dataset("/data/totalimage", self._totalimage.shape, self._totalimage.dtype,
+                                           chunks=(chunkheight, chunkwidth),
+                                           compression="gzip", compression_opts=h5parameters['deflate'],
+                                           shuffle=h5parameters['shuffle'])
+                ds[:] = self._totalimage
+
+            meta = self._generate_hdf5_metadata()
+            for k in meta:
+                h5file[k] = meta[k]
+
+    @property
+    def intensities(self) -> np.ndarray:
+        """Return a 3D :class:`numpy.ndarray` of `float` containing the spectral intensities of the image.
+
+        The shape of the ndarray is (height_of_image_in_pixels, width_of_image_in_pixels, number_of_data_points).
+
+        :return: A :class:`numpy.ndarray` of spectral intensities.
+        :rtype: :class:`numpy.ndarray`
+        """
+        if not self._file_has_been_read:
+            self.read(self._filename)
+        return self._data
+
+    @property
+    def wavenumbers(self) -> np.ndarray:
+        """Return a 1D :class:`numpy.ndarray` of `float` containing the wavenumber values.
+
+        :return: A :class:`numpy.ndarray` of wavenumber values.
+        :rtype: :class:`numpy.ndarray`
+        """
+        if not self._file_has_been_read:
+            self.read(self._filename)
+        return self._wavenumbers
+
+    @property
+    def total_image(self) -> np.ndarray:
+        """Return a 2D :class:`numpy.ndarray` of `float` containing the sum of spectral intensities at each pixel.
+
+        The shape of the ndarray is (height_of_image_in_pixels, width_of_image_in_pixels).
+
+        :return: A :class:`numpy.ndarray` of total spectral intensities.
+        :rtype: :class:`numpy.ndarray`
+        """
+        if not self._file_has_been_read:
+            self.read(self._filename)
+        return self._totalimage
+
+    @property
+    def total_spectrum(self) -> np.ndarray:
+        """Return a 1D :class:`numpy.ndarray` of `float` containing the sum of spectral intensities of all pixels.
+
+        :return: A :class:`numpy.ndarray` of total spectral intensities.
+        :rtype: :class:`numpy.ndarray`
+        """
+        if not self._file_has_been_read:
+            self.read(self._filename)
+        return self._totalspectrum
 
     @property
     def metadata(self) -> dict:
-        """Returns a `dict` containing metadata relating to the file.
-        The keys of the dict are:
+        """Return a `dict` containing metadata relating to the file.
 
+        The keys of the dict are:
             'filename': absolute path to the file that was processed.
             'xpixels': number of pixels in the x direction (image width).
             'ypixels': number of pixels in the y direction (image height).
@@ -340,7 +624,7 @@ class AgilentIRFile:
             'ylabel': a label that can be used for the y-axis of a spectral plot ('absorbance').
             'acqdatetime': date and time of data acqusition in ISO 8601 format (YYYY-MM-DDTHH:mm:ss)
 
-        :return: A dict of parameters extracted from the file
+        :return: A dict of parameters extracted from the file.
         :rtype: dict
         """
         if not self._file_has_been_read:
@@ -355,31 +639,21 @@ class AgilentIRFile:
                 'fpasize': self._fpa_size,
                 'firstwavenumber': self._first_wavenumber,
                 'lastwavenumber': self._last_wavenumber,
-                'xlabel': 'wavenumbers (cm-1)',
+                'xlabel': 'wavenumber (cm^-1)',
                 'ylabel': 'absorbance',
-                'acqdatetime': self._acquisition_datetime.isoformat()
+                'acqdatetime': self._acquisition_datetime.isoformat(),
+                'datashape': "(y, x, wavenumbers)"
                 }
         return meta
 
     @property
-    def intensities(self) -> np.ndarray:
-        """Returns a :class:`numpy.ndarray` of `float` containing the spectral intensities of the image.
-        The shape of the ndarray is (number_of_data_points, height_of_image_in_pixels, width_of_image_in_pixels)
+    def hdf5_metadata(self):
+        """Return a `dict` containing HDF5-specific metadata relating to the file.
 
-        :return: A :class:`numpy.ndarray` of spectral intensities.
-        :rtype: :class:`numpy.ndarray`
+        These metadata are used when exporting to HDF5.
+        A free viewer for HDF5 files is available at https://www.hdfgroup.org/downloads/hdfview/.
+
+        :return: A dict of parameters extracted from the file.
+        :rtype: dict
         """
-        if not self._file_has_been_read:
-            self.read(self._filename)
-        return self._data
-
-    @property
-    def xvalues(self) -> np.ndarray:
-        """Returns a :class:`numpy.ndarray` of `float` containing the wavenumber values.
-
-        :return: A :class:`numpy.ndarray` of wavenumber values.
-        :rtype: :class:`numpy.ndarray`
-        """
-        if not self._file_has_been_read:
-            self.read(self._filename)
-        return self._wavenumbers
+        return self._generate_hdf5_metadata()
