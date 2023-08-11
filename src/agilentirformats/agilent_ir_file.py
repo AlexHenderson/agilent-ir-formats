@@ -9,7 +9,7 @@
 
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from datetime import datetime
 from enum import Enum
@@ -48,6 +48,7 @@ class AgilentIRFile:
     Static methods:
         filetype()      string identifying the type of files this class reads.
         filefilter()    string identifying the Windows file extensions for files this class can read.
+        find_files()    list of all readable files in a directory structure.
         isreadable()    whether this class is capable of reading a given file.
         version()       the version number of this code.
 
@@ -57,9 +58,8 @@ class AgilentIRFile:
         """Nested Enumeration class to hold flags for the types of data the outer class can cope with.
 
         """
-
-        TILE = 1  # : Single tile images from a focal plane array experiment.
-        MOSAIC = 2  # : Multiple single tile images arranged into a mosaic.
+        TILE = 1    # Single tile images from a focal plane array experiment.
+        MOSAIC = 2  # Multiple single tile images arranged into a mosaic.
 
     @staticmethod
     def filetype() -> str:
@@ -84,6 +84,54 @@ class AgilentIRFile:
         return "*.dmt;*.seq"
 
     @staticmethod
+    def find_files(search_location: str | Path = ".", recursive: bool = True) -> list[str]:
+        """Return a list of Agilent IR image files in a search location.
+
+        `search_location` is searched for *.dmt and *.seq files.
+
+        If `recursive is `True` (default) all paths below the `search_location` will be searched. Otherwise, only the
+        `search_location` directory will be searched.
+
+        Discovered files are checked to see if they are readable, and discarded if not.
+
+        :param search_location: Directory to act as starting point for tree search.
+        :type search_location: str or :class:`pathlib.Path`, optional
+        :param recursive: Whether a recursive search is required.
+        :type recursive: bool, optional
+        :return: list of discovered files.
+        :rtype: list[str]
+        :raises RuntimeError: Raised if the `search_location` is not a directory.
+        """
+
+        search_location = Path(search_location)
+        if not search_location.is_dir():
+            raise RuntimeError("search_location should be a directory.")
+
+        if recursive:
+            mosaicdmtfiles = list(search_location.rglob("*.dmt"))
+        else:
+            mosaicdmtfiles = list(search_location.glob("*.dmt"))
+        mosaicdmtfiles = list(map(Path.resolve, mosaicdmtfiles))
+        mosaicdmtfiles = list(map(Path.as_posix, mosaicdmtfiles))
+
+        if recursive:
+            singletileseqfiles = list(search_location.rglob("*.seq"))
+        else:
+            singletileseqfiles = list(search_location.glob("*.seq"))
+        singletileseqfiles = list(map(Path.resolve, singletileseqfiles))
+        singletileseqfiles = list(map(Path.as_posix, singletileseqfiles))
+
+        foundfiles = list()
+        for file in mosaicdmtfiles:
+            if AgilentIRFile.isreadable(file):
+                foundfiles.append(file)
+        for file in singletileseqfiles:
+            if AgilentIRFile.isreadable(file):
+                foundfiles.append(file)
+
+        return foundfiles
+
+    @staticmethod
     def isreadable(filename: str | Path = None) -> bool:
         """Determine whether this class is capable of reading a given file.
 
@@ -98,6 +146,28 @@ class AgilentIRFile:
         filename = Path(filename)
         if filename.suffix.lower() not in [".dmt", ".seq"]:
             return False
+
+        # Look inside the file
+        # If we have a mosaic, the .dmt file will have the words "Mosaic Tiles X" inside
+        if filename.suffix.lower() == ".dmt":
+            file_contents = filename.read_bytes()
+            regex = re.compile(b"Mosaic Tiles X")
+            matches = re.search(regex, file_contents)
+            if not matches:
+                return False
+
+        # See if there is a .bsp file with the same name as the .seq file.
+        # If so, does it contain the words "Phase Apodization"
+        if filename.suffix.lower() == ".seq":
+            bspfilename = filename.with_suffix(".bsp")
+            if not bspfilename.is_file():
+                return False
+            else:
+                file_contents = bspfilename.read_bytes()
+                regex = re.compile(b"Phase Apodization")
+                matches = re.search(regex, file_contents)
+                if not matches:
+                    return False
 
         # Passed all available tests so suggest we can read this file
         return True
@@ -430,11 +500,11 @@ class AgilentIRFile:
             '/metadata/plotting/xlabel': label suitable for the x-axis of a spectral plot.
             '/metadata/plotting/ylabelname': physical quantity of the spectral y-axis dimension.
             '/metadata/plotting/ylabelunit': unit of the spectral y-axis dimension.
-            '/metadata/plotting/ylabel': = label suitable for the y-axis of a spectral plot.
+            '/metadata/plotting/ylabel': label suitable for the y-axis of a spectral plot.
             '/metadata/plotting/plot_high2low': whether it is appropriate to plot the x-axis from high to low.
 
             '/metadata/experiment/first_xvalue': lowest wavenumber.
-            '/metadata/experiment/last_xvalue': = highest wavenumber.
+            '/metadata/experiment/last_xvalue': highest wavenumber.
 
             '/metadata/semantics/technique/accuracy_of_term': how accurate are the semantics of this section.
             '/metadata/semantics/technique/term': ontological name of this analysis technique.
@@ -494,7 +564,7 @@ class AgilentIRFile:
     def export_hdf5(self, filename: str | Path = None):
         """Write a version of the file to disc in HDF5 format.
 
-        If `filename` is `None`, the source file's name is used, swapping the .dmt extension with .h5.
+        If `filename` is `None`, the source file's name is used, swapping the .dmt/.seq extension with .h5.
 
         The data is both chunked and compressed. The total intensity spectrum and total intensity image
         (where appropriate) are also exported. A range of associated metadata is also included.
@@ -622,7 +692,7 @@ class AgilentIRFile:
             'lastwavenumber': highest wavenumber recorded.
             'xlabel': a label that can be used for the x-axis of a spectral plot ('wavenumbers (cm-1)').
             'ylabel': a label that can be used for the y-axis of a spectral plot ('absorbance').
-            'acqdatetime': date and time of data acqusition in ISO 8601 format (YYYY-MM-DDTHH:mm:ss)
+            'acqdatetime': date and time of data acquisition in ISO 8601 format (YYYY-MM-DDTHH:mm:ss)
 
         :return: A dict of parameters extracted from the file.
         :rtype: dict

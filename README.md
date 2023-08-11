@@ -2,7 +2,7 @@
 
 ## Agilent File Format Handling for Infrared Spectroscopy
 Author: Alex Henderson <[alex.henderson@manchester.ac.uk](alex.henderson@manchester.ac.uk)>              
-Version: 0.2.0  
+Version: 0.3.0  
 Copyright: (c) 2018-2023 Alex Henderson   
 
 ## About ##
@@ -36,6 +36,7 @@ Methods:
 Static methods:
     filetype()      string identifying the type of files this class reads.
     filefilter()    string identifying the Windows file extensions for files this class can read.
+    find_files()    list of all readable files in a directory structure.
     isreadable()    whether this class is capable of reading a given file.
     version()       the version number of this code.
 ```
