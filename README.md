@@ -2,8 +2,8 @@
 
 ## Agilent File Format Handling for Infrared Spectroscopy
 Author: Alex Henderson <[alex.henderson@manchester.ac.uk](alex.henderson@manchester.ac.uk)>              
-Version: 0.3.0  
-Copyright: (c) 2018-2023 Alex Henderson   
+Version: 0.4.0  
+Copyright: (c) 2018-2024 Alex Henderson   
 
 ## About ##
 Python package to read hyperspectral image files produced by infrared spectroscopy instrumentation from Agilent Technologies, Inc.
@@ -48,18 +48,18 @@ Open a file and display simple metadata.
 ``` python
 from pprint import pprint   # only for this example
 
-from agilentirformats import AgilentIRFile
+from agilent_ir_formats.agilent_ir_file import AgilentIRFile
 
 filename = r"C:\mydata\myfile\myfile.dmt"
 
 reader = AgilentIRFile()
 reader.read(filename)
 
-xvalues = reader.xvalues
+wavenumbers = reader.wavenumbers
 intensities = reader.intensities
 metadata = reader.metadata
 
-print(xvalues.shape)
+print(wavenumbers.shape)
 print(intensities.shape)
 pprint(metadata)
 
@@ -84,7 +84,7 @@ pprint(metadata)
 Convert a file to HDF5 format in the same location.
 
 ``` python
-from agilentirformats import AgilentIRFile
+from agilent_ir_formats.agilent_ir_file import AgilentIRFile
 
 filename = r"C:\mydata\myfile\myfile.dmt"
 
@@ -97,7 +97,7 @@ AgilentIRFile(filename).export_hdf5()
 * numpy
 
 ## Licence conditions ##
-Copyright (c) 2018-2023 Alex Henderson (alex.henderson@manchester.ac.uk)   
+Copyright (c) 2018-2024 Alex Henderson (alex.henderson@manchester.ac.uk)   
 Licensed under the MIT License. See https://opensource.org/licenses/MIT      
 SPDX-License-Identifier: MIT   
 Visit https://github.com/AlexHenderson/agilent-ir-formats/ for the most recent version  

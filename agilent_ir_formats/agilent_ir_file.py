@@ -1,6 +1,6 @@
 """
     Agilent File Format Handling for Infrared Spectroscopy
-    Copyright (c) 2018-2023  Alex Henderson <alex.henderson@manchester.ac.uk>
+    Copyright (c) 2018-2024  Alex Henderson <alex.henderson@manchester.ac.uk>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the MIT licence.
@@ -9,7 +9,7 @@
 
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from datetime import datetime
 from enum import Enum
