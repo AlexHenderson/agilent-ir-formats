@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "agilent-ir-formats"
-version = "0.4.0"
+version = "1.0.0"
 description = "Agilent File Format Handling for Infrared Spectroscopy"
 authors = ["Alex Henderson <alex.henderson@manchester.ac.uk>"]
 readme = "README.md"

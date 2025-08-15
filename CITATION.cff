@@ -9,8 +9,8 @@ authors:
     affiliation: University of Manchester, UK
     email: alex.henderson@manchester.ac.uk
     website: https://alexhenderson.info
-version: 0.4.0
-date-released: "2024-05-31"
+version: 1.0.0
+date-released: "2025-08-15"
 license: MIT
 license-url: https://spdx.org/licenses/MIT#licenseText
 repository: "https://github.com/AlexHenderson/agilent-ir-formats"

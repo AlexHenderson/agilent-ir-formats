@@ -2,8 +2,8 @@
 
 ## Agilent File Format Handling for Infrared Spectroscopy
 Author: Alex Henderson <[alex.henderson@manchester.ac.uk](alex.henderson@manchester.ac.uk)>              
-Version: 0.4.0  
-Copyright: (c) 2018-2024 Alex Henderson   
+Version: 1.0.0  
+Copyright: (c) 2018-2025 Alex Henderson   
 
 ## About ##
 Python package to read hyperspectral image files produced by infrared spectroscopy instrumentation from Agilent Technologies, Inc.
@@ -97,7 +97,7 @@ AgilentIRFile(filename).export_hdf5()
 * numpy
 
 ## Licence conditions ##
-Copyright (c) 2018-2024 Alex Henderson (alex.henderson@manchester.ac.uk)   
+Copyright (c) 2018-2025 Alex Henderson (alex.henderson@manchester.ac.uk)   
 Licensed under the MIT License. See https://opensource.org/licenses/MIT      
 SPDX-License-Identifier: MIT   
 Visit https://github.com/AlexHenderson/agilent-ir-formats/ for the most recent version  
